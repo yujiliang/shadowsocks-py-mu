@@ -155,8 +155,8 @@ class AeadCryptoBase(object):
         # n, n > 0, waiting data
         self._chunk = {'mlen': AEAD_MSG_LEN_UNKNOWN, 'data': b''}
 
-        self.encrypt_once = self.aead_encrypt
-        self.decrypt_once = self.aead_decrypt
+        # self.encrypt_once = self.aead_encrypt
+        # self.decrypt_once = self.aead_decrypt
 
         # load libsodium for nonce increment
         if not sodium_loaded:
