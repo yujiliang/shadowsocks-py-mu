@@ -38,6 +38,9 @@ TIMEOUTS_CLEAN_SIZE = 512
 
 MSG_FASTOPEN = 0x20000000
 
+# SOCKS METHOD definition
+METHOD_NOAUTH = 0
+
 # SOCKS command definition
 CMD_CONNECT = 1
 CMD_BIND = 2
@@ -54,7 +57,7 @@ CMD_UDP_ASSOCIATE = 3
 # for each handler, it could be at one of several stages:
 
 # as sslocal:
-# stage 0 SOCKS hello received from local, send hello to local
+# stage 0 auth METHOD received from local, reply with selection message
 # stage 1 addr received from local, query DNS for remote
 # stage 2 UDP assoc
 # stage 3 DNS resolved, connect to remote
@@ -92,6 +95,18 @@ WAIT_STATUS_WRITING = 2
 WAIT_STATUS_READWRITING = WAIT_STATUS_READING | WAIT_STATUS_WRITING
 
 BUF_SIZE = 32 * 1024
+UP_STREAM_BUF_SIZE = 16 * 1024
+DOWN_STREAM_BUF_SIZE = 32 * 1024
+
+# helper exceptions for TCPRelayHandler
+
+
+class BadSocksHeader(Exception):
+    pass
+
+
+class NoAcceptableMethods(Exception):
+    pass
 
 # helper exceptions for TCPRelayHandler
 
@@ -115,17 +130,19 @@ class TCPRelayHandler(object):
         self._remote_sock = None
         self._config = config
         self._dns_resolver = dns_resolver
+        self.tunnel_remote = config.get('tunnel_remote', "8.8.8.8")
+        self.tunnel_remote_port = config.get('tunnel_remote_port', 53)
+        self.tunnel_port = config.get('tunnel_port', 53)
+        self._is_tunnel = server._is_tunnel
 
         # TCP Relay works as either sslocal or ssserver
         # if is_local, this is sslocal
         self._is_local = is_local
         self._stage = STAGE_INIT
         self._cryptor = cryptor.Cryptor(config['password'],
-                                        config['method'])
-        if 'one_time_auth' in config:
-            self._ota_enable = config['one_time_auth']
-        else:
-            self._ota_enable = False
+                                        config['method'],
+                                        config['crypto_path'])
+        self._ota_enable = config.get('one_time_auth', False)
         self._ota_enable_session = self._ota_enable
         self._ota_buff_head = b''
         self._ota_buff_data = b''
@@ -137,10 +154,7 @@ class TCPRelayHandler(object):
         self._upstream_status = WAIT_STATUS_READING
         self._downstream_status = WAIT_STATUS_INIT
         self._remote_address = None
-        if 'forbidden_ip' in config:
-            self._forbidden_iplist = config['forbidden_ip']
-        else:
-            self._forbidden_iplist = None
+        self._forbidden_iplist = config.get('forbidden_ip')
         if is_local:
             self._chosen_server = self._get_a_server()
         fd_to_handlers[local_sock.fileno()] = self
@@ -189,21 +203,23 @@ class TCPRelayHandler(object):
             if self._upstream_status != status:
                 self._upstream_status = status
                 dirty = True
-        if dirty:
-            if self._local_sock:
-                event = eventloop.POLL_ERR
-                if self._downstream_status & WAIT_STATUS_WRITING:
-                    event |= eventloop.POLL_OUT
-                if self._upstream_status & WAIT_STATUS_READING:
-                    event |= eventloop.POLL_IN
-                self._loop.modify(self._local_sock, event)
-            if self._remote_sock:
-                event = eventloop.POLL_ERR
-                if self._downstream_status & WAIT_STATUS_READING:
-                    event |= eventloop.POLL_IN
-                if self._upstream_status & WAIT_STATUS_WRITING:
-                    event |= eventloop.POLL_OUT
-                self._loop.modify(self._remote_sock, event)
+        if not dirty:
+            return
+
+        if self._local_sock:
+            event = eventloop.POLL_ERR
+            if self._downstream_status & WAIT_STATUS_WRITING:
+                event |= eventloop.POLL_OUT
+            if self._upstream_status & WAIT_STATUS_READING:
+                event |= eventloop.POLL_IN
+            self._loop.modify(self._local_sock, event)
+        if self._remote_sock:
+            event = eventloop.POLL_ERR
+            if self._downstream_status & WAIT_STATUS_READING:
+                event |= eventloop.POLL_IN
+            if self._upstream_status & WAIT_STATUS_WRITING:
+                event |= eventloop.POLL_OUT
+            self._loop.modify(self._remote_sock, event)
 
     def _write_to_sock(self, data, sock):
         # write data to sock
@@ -250,13 +266,8 @@ class TCPRelayHandler(object):
         return True
 
     def _handle_stage_connecting(self, data):
-        if self._is_local:
-            if self._ota_enable:
-                data = self._ota_chunk_data_gen(data)
-            data = self._cryptor.encrypt(data)
-            self._data_to_write_to_remote.append(data)
-        else:
-            if self._ota_enable:
+        if not self._is_local:
+            if self._ota_enable_session:
                 self._ota_chunk_data(data,
                                      self._data_to_write_to_remote.append)
             else:
@@ -267,8 +278,7 @@ class TCPRelayHandler(object):
         data = self._cryptor.encrypt(data)
         self._data_to_write_to_remote.append(data)
 
-        if self._is_local and not self._fastopen_connected and \
-                self._config['fast_open']:
+        if self._config['fast_open'] and not self._fastopen_connected:
             # for sslocal and fastopen, we basically wait for data and use
             # sendto to connect
             try:
@@ -301,6 +311,7 @@ class TCPRelayHandler(object):
                     shell.print_exception(e)
                     self.destroy()
 
+    @shell.exception_handle(self_=True, destroy=True, conn_err=True)
     def _handle_stage_addr(self, data):
         try:
             addr, port = self._local_sock.getpeername()[:2]
@@ -360,6 +371,7 @@ class TCPRelayHandler(object):
 
             if self._is_local is False:
                 # spec https://shadowsocks.org/en/spec/one-time-auth.html
+                self._ota_enable_session = addrtype & ADDRTYPE_AUTH
                 if self._ota_enable or (addrtype & ADDRTYPE_AUTH == ADDRTYPE_AUTH):
                     if not self._ota_enable and self._config['verbose']:
                         logging.info('U[%d] TCP one time auth automatically enabled' % self._config['server_port'])
@@ -429,55 +441,57 @@ class TCPRelayHandler(object):
         remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         return remote_sock
 
+    @shell.exception_handle(self_=True)
     def _handle_dns_resolved(self, result, error):
         if error:
-            self._log_error(error)
+            addr, port = self._client_address[0], self._client_address[1]
+            logging.error('%s when handling connection from %s:%d' %
+                          (error, addr, port))
             self.destroy()
             return
-        if result and result[1]:
-            ip = result[1]
-            try:
-                self._stage = STAGE_CONNECTING
-                remote_addr = ip
-                if self._is_local:
-                    remote_port = self._chosen_server[1]
-                else:
-                    remote_port = self._remote_address[1]
+        if not (result and result[1]):
+            self.destroy()
+            return
 
-                if self._is_local and self._config['fast_open']:
-                    # for fastopen:
-                    # wait for more data arrive and send them in one SYN
-                    self._stage = STAGE_CONNECTING
-                    # we don't have to wait for remote since it's not
-                    # created
-                    self._update_stream(STREAM_UP, WAIT_STATUS_READING)
-                    # TODO when there is already data in this packet
-                else:
-                    # else do connect
-                    remote_sock = self._create_remote_socket(remote_addr,
-                                                             remote_port)
-                    try:
-                        remote_sock.connect((remote_addr, remote_port))
-                    except (socket.error, OSError, IOError) as e:
-                        if eventloop.errno_from_exception(e) == \
-                                errno.EINPROGRESS:
-                            pass
-                    self._loop.add(remote_sock,
-                                   eventloop.POLL_ERR | eventloop.POLL_OUT,
-                                   self._server)
-                    self._stage = STAGE_CONNECTING
-                    self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
-                    self._update_stream(STREAM_DOWN, WAIT_STATUS_READING)
-                return
-            except Exception as e:
-                shell.print_exception(e)
-        self.destroy()
+        ip = result[1]
+        self._stage = STAGE_CONNECTING
+        remote_addr = ip
+        if self._is_local:
+            remote_port = self._chosen_server[1]
+        else:
+            remote_port = self._remote_address[1]
+
+        if self._is_local and self._config['fast_open']:
+            # for fastopen:
+            # wait for more data arrive and send them in one SYN
+            self._stage = STAGE_CONNECTING
+            # we don't have to wait for remote since it's not
+            # created
+            self._update_stream(STREAM_UP, WAIT_STATUS_READING)
+            # TODO when there is already data in this packet
+        else:
+            # else do connect
+            remote_sock = self._create_remote_socket(remote_addr,
+                                                     remote_port)
+            try:
+                remote_sock.connect((remote_addr, remote_port))
+            except (OSError, IOError) as e:
+                if eventloop.errno_from_exception(e) == \
+                        errno.EINPROGRESS:
+                    pass
+            self._loop.add(remote_sock,
+                           eventloop.POLL_ERR | eventloop.POLL_OUT,
+                           self._server)
+            self._stage = STAGE_CONNECTING
+            self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
+            self._update_stream(STREAM_DOWN, WAIT_STATUS_READING)
 
     def _write_to_sock_remote(self, data):
         self._write_to_sock(data, self._remote_sock)
 
     def _ota_chunk_data(self, data, data_cb):
         # spec https://shadowsocks.org/en/spec/one-time-auth.html
+        unchunk_data = b''
         while len(data) > 0:
             if self._ota_len == 0:
                 # get DATA.LEN + HMAC-SHA1
@@ -500,13 +514,14 @@ class TCPRelayHandler(object):
                 key = self._cryptor.decipher_iv + index
                 if onetimeauth_verify(_hash, _data, key) is False:
                     logging.warn('U[%d] TCP One time auth fail, chunk is dropped!' % self._config[
-                                 'server_port'])
+                        'server_port'])
                 else:
-                    data_cb(self._ota_buff_data)
+                    unchunk_data += _data
                     self._ota_chunk_idx += 1
                 self._ota_buff_head = b''
                 self._ota_buff_data = b''
                 self._ota_len = 0
+        data_cb(unchunk_data)
         return
 
     def _ota_chunk_data_gen(self, data):
@@ -519,16 +534,54 @@ class TCPRelayHandler(object):
 
     def _handle_stage_stream(self, data):
         if self._is_local:
-            if self._ota_enable:
+            if self._ota_enable_session:
                 data = self._ota_chunk_data_gen(data)
             data = self._cryptor.encrypt(data)
             self._write_to_sock(data, self._remote_sock)
         else:
-            if self._ota_enable:
+            if self._ota_enable_session:
                 self._ota_chunk_data(data, self._write_to_sock_remote)
             else:
                 self._write_to_sock(data, self._remote_sock)
         return
+
+    def _check_auth_method(self, data):
+        # VER, NMETHODS, and at least 1 METHODS
+        if len(data) < 3:
+            logging.warning('method selection header too short')
+            raise BadSocksHeader
+        socks_version = common.ord(data[0])
+        nmethods = common.ord(data[1])
+        if socks_version != 5:
+            logging.warning('unsupported SOCKS protocol version ' +
+                            str(socks_version))
+            raise BadSocksHeader
+        if nmethods < 1 or len(data) != nmethods + 2:
+            logging.warning('NMETHODS and number of METHODS mismatch')
+            raise BadSocksHeader
+        noauth_exist = False
+        for method in data[2:]:
+            if common.ord(method) == METHOD_NOAUTH:
+                noauth_exist = True
+                break
+        if not noauth_exist:
+            logging.warning('none of SOCKS METHOD\'s '
+                            'requested by client is supported')
+            raise NoAcceptableMethods
+
+    def _handle_stage_init(self, data):
+        try:
+            self._check_auth_method(data)
+        except BadSocksHeader:
+            self.destroy()
+            return
+        except NoAcceptableMethods:
+            self._write_to_sock(b'\x05\xff', self._local_sock)
+            self.destroy()
+            return
+
+        self._write_to_sock(b'\x05\00', self._local_sock)
+        self._stage = STAGE_ADDR
 
     def _on_local_read(self):
         # handle all local read events and dispatch them to methods for
@@ -537,16 +590,15 @@ class TCPRelayHandler(object):
             return
         is_local = self._is_local
         data = None
+        if is_local:
+            buf_size = UP_STREAM_BUF_SIZE
+        else:
+            buf_size = DOWN_STREAM_BUF_SIZE
         try:
-            data = self._local_sock.recv(BUF_SIZE)
-        except (socket.error, OSError, IOError) as e:
-            error_no = eventloop.errno_from_exception(e)
-            if sys.platform == "win32":
-                if error_no in (errno.EAGAIN, errno.EINPROGRESS,
-                                errno.EWOULDBLOCK, errno.WSAEWOULDBLOCK):
-                    return
-            elif error_no in (errno.EAGAIN, errno.EINPROGRESS,
-                              errno.EWOULDBLOCK):
+            data = self._local_sock.recv(buf_size)
+        except (OSError, IOError) as e:
+            if eventloop.errno_from_exception(e) in \
+                    (errno.ETIMEDOUT, errno.EAGAIN, errno.EWOULDBLOCK):
                 return
         if not data:
             self.destroy()
@@ -560,10 +612,12 @@ class TCPRelayHandler(object):
             self._handle_stage_stream(data)
             return
         elif is_local and self._stage == STAGE_INIT:
-            # TODO check auth method
-            self._write_to_sock(b'\x05\00', self._local_sock)
-            self._stage = STAGE_ADDR
-            return
+            # jump over socks5 init
+            if self._is_tunnel:
+                self._handle_stage_addr(data)
+                return
+            else:
+                self._handle_stage_init(data)
         elif self._stage == STAGE_CONNECTING:
             self._handle_stage_connecting(data)
         elif (is_local and self._stage == STAGE_ADDR) or \
@@ -573,8 +627,12 @@ class TCPRelayHandler(object):
     def _on_remote_read(self):
         # handle all remote read events
         data = None
+        if self._is_local:
+            buf_size = UP_STREAM_BUF_SIZE
+        else:
+            buf_size = DOWN_STREAM_BUF_SIZE
         try:
-            data = self._remote_sock.recv(BUF_SIZE)
+            data = self._remote_sock.recv(buf_size)
 
         except socket.error as err:
             error_no = err.args[0]
@@ -597,6 +655,8 @@ class TCPRelayHandler(object):
             self._write_to_sock(data, self._local_sock)
         except Exception as e:
             shell.print_exception(e)
+            if self._config['verbose']:
+                traceback.print_exc()
             # TODO use logging when debug completed
             self.destroy()
 
@@ -714,6 +774,7 @@ class TCPRelay(object):
         self._closed = False
         self._eventloop = None
         self._fd_to_handlers = {}
+        self._is_tunnel = False
 
         self._timeout = config['timeout']
         self._timeouts = []  # a list for all the handlers

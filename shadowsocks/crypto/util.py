@@ -41,9 +41,27 @@ def find_library_nt(name):
     return results
 
 
-def find_library(possible_lib_names, search_symbol, library_name):
-    import ctypes.util
+def load_library(path, search_symbol, library_name):
     from ctypes import CDLL
+    try:
+        lib = CDLL(path)
+        if hasattr(lib, search_symbol):
+            logging.info('loading %s from %s', library_name, path)
+            return lib
+        else:
+            logging.warn('can\'t find symbol %s in %s', search_symbol,
+                         path)
+    except Exception:
+        pass
+    return None
+
+
+def find_library(possible_lib_names, search_symbol, library_name,
+                 custom_path=None):
+    import ctypes.util
+
+    if custom_path:
+        return load_library(custom_path, search_symbol, library_name)
 
     paths = []
 
@@ -81,16 +99,22 @@ def find_library(possible_lib_names, search_symbol, library_name):
                 if files:
                     paths.extend(files)
     for path in paths:
-        try:
-            lib = CDLL(path)
-            if hasattr(lib, search_symbol):
-                logging.info('loading %s from %s', library_name, path)
-                return lib
-            else:
-                logging.warn('can\'t find symbol %s in %s', search_symbol,
-                             path)
-        except Exception:
-            pass
+        lib = load_library(path, search_symbol, library_name)
+        if lib:
+            return lib
+    return None
+
+
+def parse_mode(cipher_nme):
+    """
+    Parse the cipher mode from cipher name
+    e.g. aes-128-gcm, the mode is gcm
+    :param cipher_nme: str cipher name, aes-128-cfb, aes-128-gcm ...
+    :return: str/None The mode, cfb, gcm ...
+    """
+    hyphen = cipher_nme.rfind('-')
+    if hyphen > 0:
+        return cipher_nme[hyphen:]
     return None
 
 
