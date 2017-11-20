@@ -25,14 +25,16 @@ import socket
 import logging
 import json
 import collections
-import sys
 
 from shadowsocks import common, eventloop, tcprelay, udprelay, asyncdns, shell
+from shadowsocks.crypto.aead import CIPHER_NONCE_LEN
 
 
 BUF_SIZE = 1506
 STAT_SEND_LIMIT = 50
 
+# Get list of AEAD ciphers
+aead_ciphers = CIPHER_NONCE_LEN.keys()
 
 class Manager(object):
 
@@ -85,8 +87,11 @@ class Manager(object):
             logging.error("Server Exists:  P[%d], M[%s], E[%s]" % (
                 port, config['method'], config['email']))
             return
-        logging.info("Server Added:   P[%d], M[%s], E[%s]" %
-                     (port, config['method'], config['email']))
+        # Check if AEAD cipher is enforced
+        if config['aead_enforcement'] and config['method'] not in aead_ciphers:
+            logging.warning("AEAD Cipher Enforced - Rejected Server: P[%d], M[%s], E[%s]" % (
+                port, config['method'], config['email']))
+            return
         t = tcprelay.TCPRelay(config, self._dns_resolver, False,
                               self.stat_callback)
         u = udprelay.UDPRelay(config, self._dns_resolver, False,
@@ -94,6 +99,8 @@ class Manager(object):
         t.add_to_loop(self._loop)
         u.add_to_loop(self._loop)
         self._relays[port] = (t, u)
+        logging.info("Server Added:   P[%d], M[%s], E[%s]" %
+                     (port, config['method'], config['email']))
 
     def remove_port(self, config):
         port = int(config['server_port'])

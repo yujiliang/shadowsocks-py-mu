@@ -2,7 +2,7 @@
 
 import logging
 # !!! Only edit this line when you update your configuration file !!!
-# After you update, the values of CONFIG_VERSION in config.py and
+# After you update, the value of CONFIG_VERSION in config.py and
 # config_example.py should be the same in order to start the server
 CONFIG_VERSION = '20160623-2'
 
@@ -35,8 +35,6 @@ NODE_ID = '1'
 CHECKTIME = 30
 # Time interval between 2 pushes to the database or API
 SYNCTIME = 120
-# Choose True if you want to use custom method and False if you don't
-CUSTOM_METHOD = True
 
 
 # Manager Settings
@@ -50,18 +48,24 @@ MANAGE_BIND_IP = '127.0.0.1'
 MANAGE_PORT = 65000
 
 
-# Network Settings
-# ----------------
+# Server Settings
+# ---------------
 # Address binding settings
 # if you want to bind ipv4 and ipv6 please use '::'
 # if you want to bind only all of ipv4 please use '0.0.0.0'
 # if you want to bind a specific IP you may use something like '4.4.4.4'
 SS_BIND_IP = '::'
-# This default method will be replaced by database record if applicable
-SS_METHOD = 'aes-256-cfb'
-# Choose whether enforce Shadowsocks One Time Auth (OTA)
+# This default method will be replaced by database/api query result if applicable when CUSTOM_METHOD is enabled
+SS_METHOD = 'chacha20-ietf-poly1305'
+CUSTOM_METHOD = True
+# Choose whether to enforce Shadowsocks One Time Auth (OTA)
 # OTA will still be enabled for the client if it sends an AUTH Address type(0x10)
+# !!! THIS OPTION IS DEPRECATED !!!
 SS_OTA = False
+# Enforce the use of AEAD ciphers
+# When enabled, all requests of creating server with non-AEAD cipher will be omitted
+# Check shadowsocks/crypto/aead.py for the list of ciphers
+SS_ENFORCE_AEAD = True
 # Skip listening these ports
 SS_SKIP_PORTS = [80]
 # TCP Fastopen (Some OS may not support this, Eg.: Windows)
