@@ -81,6 +81,14 @@ def main():
             firewall_ports = config.SS_ALLOW_PORTS
     else:
         firewall_ports = None
+
+    # Build configuration
+    try:
+        ss_enforce_aead = config.SS_ENFORCE_AEAD
+    except AttributeError:
+        logging.info("Configuration for AEAD cipher enforcement not found, use False as default")
+        ss_enforce_aead = False
+
     configer = {
         'server': config.SS_BIND_IP,
         'local_port': 1081,
@@ -94,7 +102,8 @@ def main():
         'forbidden_ip': config.SS_FORBIDDEN_IP,
         'firewall_mode': config.SS_FIREWALL_MODE,
         'firewall_trusted': config.SS_FIREWALL_TRUSTED,
-        'firewall_ports': firewall_ports
+        'firewall_ports': firewall_ports,
+        'aead_enforcement': ss_enforce_aead
     }
     logging.info('-----------------------------------------')
     logging.info('Multi-User Shadowsocks Server Starting...')
