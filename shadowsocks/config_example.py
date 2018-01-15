@@ -4,6 +4,8 @@ import logging
 # !!! Only edit this line when you update your configuration file !!!
 # After you update, the value of CONFIG_VERSION in config.py and
 # config_example.py should be the same in order to start the server
+import os
+
 CONFIG_VERSION = '20160623-2'
 
 
@@ -98,11 +100,15 @@ LOG_ENABLE = True
 SS_VERBOSE = False
 # Available Log Level: logging.NOTSET|DEBUG|INFO|WARNING|ERROR|CRITICAL
 LOG_LEVEL = logging.INFO
-LOG_FILE = 'ss_log/shadowsocks.log'
+LOG_FILE_PATH = '/root/ss_log/'
+LOG_FILE = LOG_FILE_PATH + 'shadowsocks.log'
 # The following format is the one suggested for debugging
 # LOG_FORMAT = '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s'
 LOG_FORMAT = '%(asctime)s %(levelname)s %(message)s'
 LOG_DATE_FORMAT = '%b %d %H:%M:%S'
+
+if not os.path.exists(LOG_FILE_PATH):
+    os.mkdir(LOG_FILE_PATH)
 
 # default file handle
 fileHandler = logging.FileHandler(LOG_FILE)
