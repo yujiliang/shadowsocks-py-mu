@@ -103,3 +103,15 @@ LOG_FILE = 'shadowsocks.log'
 # LOG_FORMAT = '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s'
 LOG_FORMAT = '%(asctime)s %(levelname)s %(message)s'
 LOG_DATE_FORMAT = '%b %d %H:%M:%S'
+
+# default file handle
+fileHandler = logging.FileHandler(LOG_FILE)
+fileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+fileHandler.setLevel(LOG_LEVEL)
+
+# Timed Rotating File Handler
+timedRotatingFileHandler = logging.TimedRotatingFileHandler(filename=LOG_FILE, when="D", interval=1, backupCount=7)
+timedRotatingFileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+timedRotatingFileHandler.setLevel(LOG_LEVEL)
+
+LOG_HANDLE = timedRotatingFileHandler

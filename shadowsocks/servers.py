@@ -37,10 +37,8 @@ logging.basicConfig(format=config.LOG_FORMAT,
                     datefmt=config.LOG_DATE_FORMAT, stream=sys.stdout, level=config.LOG_LEVEL)
 if config.LOG_ENABLE:
     logger = logging.getLogger()
-    fileLogger = logging.FileHandler(config.LOG_FILE)
-    fileLogger.setFormatter(logging.Formatter(config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT))
-    fileLogger.setLevel(config.LOG_LEVEL)
-    logger.addHandler(fileLogger)
+    logger.addHandler(config.LOG_HANDLE)
+
 
 # Check whether the versions of config files match
 try:
