@@ -98,7 +98,7 @@ LOG_ENABLE = True
 SS_VERBOSE = False
 # Available Log Level: logging.NOTSET|DEBUG|INFO|WARNING|ERROR|CRITICAL
 LOG_LEVEL = logging.INFO
-LOG_FILE = 'shadowsocks.log'
+LOG_FILE = 'ss_log/shadowsocks.log'
 # The following format is the one suggested for debugging
 # LOG_FORMAT = '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s'
 LOG_FORMAT = '%(asctime)s %(levelname)s %(message)s'
@@ -110,7 +110,7 @@ fileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 fileHandler.setLevel(LOG_LEVEL)
 
 # Timed Rotating File Handler
-timedRotatingFileHandler = logging.TimedRotatingFileHandler(filename=LOG_FILE, when="D", interval=1, backupCount=7)
+timedRotatingFileHandler = logging.TimedRotatingFileHandler(filename=LOG_FILE, when="D", interval=1, backupCount=30)
 timedRotatingFileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 timedRotatingFileHandler.setLevel(LOG_LEVEL)
 
