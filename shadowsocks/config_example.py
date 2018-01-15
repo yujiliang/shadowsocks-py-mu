@@ -118,7 +118,7 @@ fileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 fileHandler.setLevel(LOG_LEVEL)
 
 # Timed Rotating File Handler
-timedRotatingFileHandler = logging.TimedRotatingFileHandler(filename=LOG_FILE, when="D", interval=1, backupCount=30)
+timedRotatingFileHandler = TimedRotatingFileHandler(filename=LOG_FILE, when="D", interval=1, backupCount=30)
 timedRotatingFileHandler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 timedRotatingFileHandler.setLevel(LOG_LEVEL)
 
