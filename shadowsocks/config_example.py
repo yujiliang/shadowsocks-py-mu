@@ -1,6 +1,7 @@
 # !!! Please rename config_example.py as config.py BEFORE editing it !!!
 
 import logging
+import logging.handlers
 # !!! Only edit this line when you update your configuration file !!!
 # After you update, the value of CONFIG_VERSION in config.py and
 # config_example.py should be the same in order to start the server
